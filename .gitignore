@@ -1,11 +1,10 @@
 venv/
-.env/
+.env
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
 *.db
-db_config.py
 *.csv
 *.egg-info/
 .eggs/
