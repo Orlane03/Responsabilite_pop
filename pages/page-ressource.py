@@ -6,6 +6,9 @@ import plotly.graph_objects as go
 import json
 import psycopg2
 from db_config import get_engine 
+import numpy as np
+from sklearn.cluster import DBSCAN
+from math import radians, cos, sin, asin, sqrt
 
 
 dash.register_page(__name__, path="/page-ressources", name="Ressources Médicales")
@@ -32,14 +35,13 @@ STRUCTURE_RECOURS = {
 
 
 def load_data_from_postgres():
-    """Charge les données depuis PostgreSQL"""
+    """Charge les données depuis PostgreSQL avec les nouvelles tables"""
     try:
         engine = get_engine()
         
-        
         query = """
         SELECT 
-            r.id_ressource,  -- CORRIGÉ: remplacé r.ressource par r.id_ressource
+            r.id_ressource,
             r.nom_ressource,
             r.description_ressource,
             r.typeressource,
@@ -56,7 +58,13 @@ def load_data_from_postgres():
             nr.ordre_niveau,
             nr.description_niveau,
             -- Jointure avec spécialités
-            STRING_AGG(s.Nom_specialite, ', ') as specialites,
+            STRING_AGG(DISTINCT s.Nom_specialite, ', ') as specialites,
+            -- Jointure avec spécificités
+            STRING_AGG(DISTINCT sp.Nom_Specificite, ', ') as specificites,
+            -- Jointure avec formations
+            STRING_AGG(DISTINCT f.Nom_Formation, ', ') as formations,
+            -- Jointure avec diplômes
+            STRING_AGG(DISTINCT d.Nom_Diplome, ', ') as diplomes,
             -- Jointure avec avis (moyenne des notes)
             COALESCE(AVG(ar.note), 0) as note_moyenne,
             COUNT(ar.id_avis) as nombre_avis
@@ -65,23 +73,29 @@ def load_data_from_postgres():
         LEFT JOIN niveau_recours nr ON tps.id_niveau_recours = nr.id_niveau_recours
         LEFT JOIN Ressource_specialite rs ON r.id_ressource = rs.id_ressource
         LEFT JOIN specialite s ON rs.id_specialite = s.id_specialite
+        LEFT JOIN Ressource_Specificite rsp ON r.id_ressource = rsp.id_ressource
+        LEFT JOIN Specificite sp ON rsp.id_specificite = sp.id_specificite
+        LEFT JOIN Ressource_Formation rf ON r.id_ressource = rf.id_ressource
+        LEFT JOIN Formation f ON rf.id_formation = f.id_formation
+        LEFT JOIN Ressource_Diplome rd ON r.id_ressource = rd.id_ressource
+        LEFT JOIN Diplome d ON rd.id_diplome = d.id_diplome
         LEFT JOIN avis_Ressource ar ON r.id_ressource = ar.id_ressource
         GROUP BY 
             r.id_ressource, r.nom_ressource, r.description_ressource, r.typeressource,
             r.telephone, r.email, r.horaires_ouverture, r.secteur, r.conventionnement,
-            r.latitude_ressource, r.longitude_ressource, tps.nom_type, tps.description_type,  -- CORRIGÉ: tps.Description_Type -> tps.description_type
+            r.latitude_ressource, r.longitude_ressource, tps.nom_type, tps.description_type,
             nr.nom_niveau, nr.ordre_niveau, nr.description_niveau
         ORDER BY nr.ordre_niveau, tps.nom_type, r.nom_ressource
         """
         
         df = pd.read_sql(query, engine)
         
-        
+        # Nettoyage des données
         df['Praticien_Complet'] = df['nom_ressource']
         df['note_moyenne'] = pd.to_numeric(df['note_moyenne'], errors='coerce').fillna(0)  
         df['nombre_avis'] = pd.to_numeric(df['nombre_avis'], errors='coerce').fillna(0)    
         
-        
+        # Informations géographiques par défaut
         df['ville'] = 'Bayonne'
         df['Departement'] = '64'
         df['Nom_Département'] = 'Pyrénées-Atlantiques'
@@ -90,14 +104,7 @@ def load_data_from_postgres():
         
     except Exception as e:
         print(f"Erreur lors du chargement des données : {e}")
-        
-        return pd.DataFrame(columns=[
-            'id_ressource', 'nom_ressource', 'description_ressource', 'typeressource',
-            'telephone', 'email', 'horaires_ouverture', 'secteur', 'conventionnement',
-            'latitude_ressource', 'longitude_ressource', 'type_praticien', 'description_type',
-            'niveau_recours', 'ordre_niveau', 'description_niveau', 'specialites',
-            'note_moyenne', 'nombre_avis', 'Praticien_Complet', 'ville', 'Departement', 'Nom_Département'
-        ])
+        return pd.DataFrame()
 
 def load_patients_data():
     """Charge les données des patients et leurs parcours"""
@@ -197,7 +204,7 @@ COORDS_BAYONNE = {"lat": 43.4928, "lon": -1.4748}
 ZOOM_BAYONNE = 11
 
 def creer_donnees_tableau_hierarchique():
-    """Crée la structure de données pour le tableau hiérarchique"""
+    """Crée la structure de données pour le tableau hiérarchique avec les nouvelles informations"""
     if medecins_df.empty:
         return pd.DataFrame()
     
@@ -216,6 +223,9 @@ def creer_donnees_tableau_hierarchique():
             'email': ressource.get('email', ''),
             'Horaires': ressource.get('horaires_ouverture', ''),
             'specialites': ressource.get('specialites', ''),
+            'specificites': ressource.get('specificites', ''),
+            'formations': ressource.get('formations', ''),
+            'diplomes': ressource.get('diplomes', ''),
             'note_moyenne': ressource.get('note_moyenne', 0),     
             'Nombre_avis': ressource.get('nombre_avis', 0),       
             'ville': ressource.get('ville', 'Bayonne'),
@@ -224,6 +234,19 @@ def creer_donnees_tableau_hierarchique():
         })
     
     return pd.DataFrame(donnees_tableau)
+
+def creer_modal_details_praticien():
+    """Crée un modal pour afficher les détails complets d'un praticien"""
+    return html.Div([
+        dbc.Modal([
+            dbc.ModalHeader("Détails du Praticien"),
+            dbc.ModalBody(id="modal-praticien-content"),
+            dbc.ModalFooter(
+                dbc.Button("Fermer", id="close-modal-praticien", className="ml-auto")
+            ),
+        ], id="modal-praticien", size="lg"),
+    ])
+
 
 def creer_vue_hierarchique_resume(df_filtre):
     """Crée une vue hiérarchique résumée sous forme d'arbre"""
@@ -440,8 +463,9 @@ layout = html.Div([
     ], style={"marginBottom": "20px"}),
     
     
-    html.Div(id="contenu-visualisation")
+    html.Div(id="contenu-visualisation"),
 ])
+
 
 
 @dash.callback(
@@ -635,44 +659,29 @@ pathologies_overview = create_pathologies_overview()
 def render_carte(df_filtre):
     """Rendu de la carte avec toutes les ressources disponibles"""
     
+    
     df_carte = medecins_df if not medecins_df.empty else df_filtre
     
     if df_carte.empty:
         return html.Div("Aucune donnée à afficher sur la carte")
     
-    
-    print(f"Total ressources dans medecins_df: {len(df_carte)}")
-    print(f"Colonnes disponibles: {df_carte.columns.tolist()}")
-    
-    
-    coord_info = df_carte[['nom_ressource', 'latitude_ressource', 'longitude_ressource']].copy()
-    coord_info['coords_valides'] = coord_info[['latitude_ressource', 'longitude_ressource']].notna().all(axis=1)
-    
-    print("\nCoordonnées par ressource:")
-    for _, row in coord_info.iterrows():
-        print(f"- {row['nom_ressource']}: lat={row['latitude_ressource']}, lon={row['longitude_ressource']}, valide={row['coords_valides']}")
-    
-    
+    # Filtrer les ressources avec coordonnées valides
     df_carte_valide = df_carte.dropna(subset=['latitude_ressource', 'longitude_ressource'])
-    
-    print(f"\nRessources avec coordonnées valides: {len(df_carte_valide)}")
     
     if df_carte_valide.empty:
         return html.Div("Aucune ressource avec coordonnées géographiques valides")
     
-    
+    # Calcul du centre et du zoom adapté
     lat_min, lat_max = df_carte_valide['latitude_ressource'].min(), df_carte_valide['latitude_ressource'].max()
     lon_min, lon_max = df_carte_valide['longitude_ressource'].min(), df_carte_valide['longitude_ressource'].max()
-    
     
     centre_lat = (lat_min + lat_max) / 2
     centre_lon = (lon_min + lon_max) / 2
     
-    
+    # Déterminer le niveau de zoom adapté
     lat_range = lat_max - lat_min
     lon_range = lon_max - lon_min
     max_range = max(lat_range, lon_range)
-    
     
     if max_range > 1:
         zoom_adapte = 8
@@ -684,100 +693,309 @@ def render_carte(df_filtre):
         zoom_adapte = 13
     else:
         zoom_adapte = 14
+        
+    # Avant de créer la carte, ajoutez :
+    # NOUVEAU
+    df_carte_valide = optimiser_positions_marqueurs(
+    df_carte_valide, 
+    distance_min_km=0.08,  # 80 mètres minimum entre marqueurs
+    methode='spiral'
+    )
     
-    print(f"\nCentre calculé: lat={centre_lat:.4f}, lon={centre_lon:.4f}")
-    print(f"Plage lat: {lat_range:.4f}, lon: {lon_range:.4f}")
-    print(f"Zoom adapté: {zoom_adapte}")
-    
-    
+    # Créer la carte sans légende intégrée
     color_map = {niveau: config["color"] for niveau, config in STRUCTURE_RECOURS.items()}
     
-    
+    # Ajouter des couleurs pour les niveaux non définis
     niveaux_uniques = df_carte_valide['niveau_recours'].unique()
     for niveau in niveaux_uniques:
         if niveau not in color_map:
-            color_map[niveau] = "#999999"  
+            color_map[niveau] = "#999999"
     
-    
+    # Créer la figure sans légende
     df_carte_valide = df_carte_valide.copy()
-    df_carte_valide['taille_marqueur'] = 15  
+    df_carte_valide['taille_marqueur'] = 15
+    
     fig = px.scatter_mapbox(
         df_carte_valide,
         lat="latitude_ressource",
         lon="longitude_ressource",
-        size="taille_marqueur",  
+        size="taille_marqueur",
         color="niveau_recours",
         hover_name="nom_ressource",
         hover_data={
             "type_praticien": True, 
             "typeressource": True,
             "secteur": True,
+            "specialites": True,
+            "specificites": True,
             "note_moyenne": ":.1f",
             "nombre_avis": True,
-            "latitude_ressource": ":.4f",  
-            "longitude_ressource": ":.4f",
-            "taille_marqueur": False
+            "latitude_ressource": False,
+            "longitude_ressource": False,
+            "taille_marqueur": False,
+            "niveau_recours": False  # Cacher dans les infos hover
         },
         color_discrete_map=color_map,
-        size_max=20, 
-        zoom=zoom_adapte,  
-        center={"lat": centre_lat, "lon": centre_lon},  
-        title=f"Ressources Médicales ({len(df_carte_valide)}/{len(df_carte)} ressources affichées)",
+        size_max=20,
+        zoom=zoom_adapte,
+        center={"lat": centre_lat, "lon": centre_lon},
         mapbox_style="open-street-map",
-        height=700
+        height=600
     )
     
+    # Supprimer la légende intégrée
+    fig.update_layout(showlegend=False)
+    
+    # Améliorer le layout
     fig.update_layout(
-        title={
-            'text': f"Carte Interactive - {len(df_carte_valide)} ressources médicales sur {len(df_carte)} total",
-            'x': 0.5,
-            'xanchor': 'center'
-        },
-        margin=dict(l=0, r=0, t=50, b=0)
+        margin=dict(l=0, r=0, t=0, b=0),  # Réduire les marges
+        mapbox=dict(
+            bearing=0,
+            pitch=0,
+            zoom=zoom_adapte,
+            center=dict(lat=centre_lat, lon=centre_lon)
+        )
     )
     
-    
-    stats = creer_statistiques_synthese(df_carte_valide)
-    rapport = creer_rapport_territorial(df_carte_valide, "Bayonne/Pays Basque")
-    
-    
+    # Créer une légende externe
     legende_niveaux = html.Div([
-        html.H5("Légende des Niveaux de Recours"),
+        html.H5("Légende des Niveaux de Recours", style={"marginBottom": "10px"}),
         html.Div([
             html.Div([
-                html.Span("●", style={"color": config["color"], "fontSize": "18px", "marginRight": "8px"}),
-                html.Span(f"{niveau}: {config['description']}")
-            ], style={"margin": "5px 0"})
+                html.Span("●", style={
+                    "color": config["color"], 
+                    "fontSize": "20px", 
+                    "marginRight": "10px",
+                    "verticalAlign": "middle"
+                }),
+                html.Span(f"{niveau}: {config['description']}", 
+                         style={"fontSize": "14px", "verticalAlign": "middle"})
+            ], style={"margin": "8px 0", "display": "flex", "alignItems": "center"})
             for niveau, config in STRUCTURE_RECOURS.items()
         ])
     ], style={
         "backgroundColor": "#f8f9fa", 
         "padding": "15px", 
-        "borderRadius": "5px", 
-        "marginBottom": "20px"
+        "borderRadius": "8px", 
+        "marginBottom": "20px",
+        "border": "1px solid #dee2e6"
     })
     
+    # Statistiques
+    stats = creer_statistiques_synthese(df_carte_valide)
+    rapport = creer_rapport_territorial(df_carte_valide, "Bayonne/Pays Basque")
+    
     return html.Div([
-        html.H3("Cartographie Complète des Ressources Médicales", 
-               style={"textAlign": "center", "marginBottom": "20px"}),
+        # Titre principal
+        html.H3("Cartographie des Ressources Médicales", 
+               style={"textAlign": "center", "marginBottom": "20px", "color": "#2c3e50"}),
         
-        legende_niveaux,
-        stats,
-        rapport,
-        
-        dcc.Graph(figure=fig),
-        
+        # Layout en deux colonnes : Carte + Légende
         html.Div([
-            html.H5("Instructions"),
-            html.P("Survolez les marqueurs pour voir les détails. La taille indique la note moyenne.")
-        ], style={
-            "backgroundColor": "#e9ecef", 
-            "padding": "10px", 
-            "borderRadius": "5px", 
-            "marginTop": "15px"
-        })
+            # Colonne carte (70%)
+            html.Div([
+                dcc.Graph(
+                    figure=fig,
+                    style={"height": "600px", "borderRadius": "8px", "border": "1px solid #dee2e6"}
+                )
+            ], style={"width": "70%", "display": "inline-block", "verticalAlign": "top"}),
+            
+            # Colonne légende (30%)
+            html.Div([
+                legende_niveaux,
+                
+                # Mini-statistiques
+                html.Div([
+                    html.H6("Aperçu", style={"marginBottom": "10px"}),
+                    html.P(f" {len(df_carte_valide)} ressources affichées"),
+                    html.P(f" Note moyenne: {df_carte_valide['note_moyenne'].mean():.1f}/5"),
+                    html.P(f" {df_carte_valide['nombre_avis'].sum()} avis au total")
+                ], style={
+                    "backgroundColor": "#e8f5e8", 
+                    "padding": "12px", 
+                    "borderRadius": "6px",
+                    "marginTop": "15px"
+                })
+            ], style={"width": "28%", "display": "inline-block", "marginLeft": "2%", "verticalAlign": "top"})
+        ], style={"marginBottom": "30px"}),
+        
+        # Informations détaillées en dessous de la carte
+        html.Div([
+            stats,
+            rapport,
+            
+            html.Div([
+                html.H5("Instructions d'utilisation"),
+                html.Ul([
+                    html.Li("Survolez les marqueurs pour voir les détails de chaque ressource"),
+                    html.Li("Zoom et déplacement avec la souris ou les touches"),
+                    html.Li("Couleurs des marqueurs selon le niveau de recours (voir légende)")
+                ])
+            ], style={
+                "backgroundColor": "#e9ecef", 
+                "padding": "15px", 
+                "borderRadius": "5px", 
+                "marginTop": "20px"
+            })
+        ])
     ])
 
+def haversine(lon1, lat1, lon2, lat2):
+    """
+    Calcule la distance entre deux points sur la Terre en utilisant la formule haversine
+    Retourne la distance en kilomètres
+    """
+    lon1, lat1, lon2, lat2 = map(radians, [lon1, lat1, lon2, lat2])
+    dlon = lon2 - lon1
+    dlat = lat2 - lat1
+    a = sin(dlat/2)**2 + cos(lat1) * cos(lat2) * sin(dlon/2)**2
+    c = 2 * asin(sqrt(a))
+    r = 6371  # Rayon de la Terre en km
+    return c * r
+
+def optimiser_positions_marqueurs(df, distance_min_km=0.1, methode='spiral'):
+    """
+    Optimise les positions des marqueurs pour éviter les superpositions
+    
+    Args:
+        df: DataFrame avec colonnes latitude_ressource et longitude_ressource
+        distance_min_km: Distance minimale en kilomètres entre les marqueurs (0.1 = 100m)
+        methode: 'spiral' (recommandé), 'cluster', ou 'simple'
+    """
+    if len(df) < 2:
+        return df
+    
+    df = df.copy().reset_index(drop=True)
+    
+    if methode == 'spiral':
+        return _optimiser_par_spirale(df, distance_min_km)
+    elif methode == 'cluster':
+        return _optimiser_par_clustering(df, distance_min_km)
+    else:
+        return _optimiser_simple(df, distance_min_km)
+
+def _optimiser_par_spirale(df, distance_min_km):
+    """
+    Dispose les points superposés en spirale autour de leur position originale
+    """
+    positions_ajustees = []
+    
+    for i in range(len(df)):
+        lat_i = df.at[i, 'latitude_ressource']
+        lon_i = df.at[i, 'longitude_ressource']
+        
+        # Vérifier les conflits avec les positions déjà ajustées
+        position_valide = True
+        for lat_j, lon_j in positions_ajustees:
+            distance = haversine(lon_i, lat_i, lon_j, lat_j)
+            if distance < distance_min_km:
+                position_valide = False
+                break
+        
+        if position_valide:
+            # Pas de conflit, garder la position originale
+            positions_ajustees.append((lat_i, lon_i))
+        else:
+            # Trouver une nouvelle position en spirale
+            nouvelle_pos = _trouver_position_spirale(
+                lat_i, lon_i, positions_ajustees, distance_min_km
+            )
+            positions_ajustees.append(nouvelle_pos)
+            df.at[i, 'latitude_ressource'] = nouvelle_pos[0]
+            df.at[i, 'longitude_ressource'] = nouvelle_pos[1]
+    
+    return df
+
+def _trouver_position_spirale(lat_centre, lon_centre, positions_existantes, distance_min_km):
+    """
+    Trouve une position libre en suivant une spirale
+    """
+    radius_deg = distance_min_km / 111.32  # Conversion km vers degrés approximative
+    angle = 0
+    rayon = radius_deg
+    max_iterations = 36  # 36 positions testées par tour
+    
+    for iteration in range(max_iterations):
+        # Calculer la nouvelle position
+        new_lat = lat_centre + rayon * np.cos(angle)
+        new_lon = lon_centre + rayon * np.sin(angle)
+        
+        # Vérifier si cette position est libre
+        position_libre = True
+        for lat_existante, lon_existante in positions_existantes:
+            distance = haversine(new_lon, new_lat, lon_existante, lat_existante)
+            if distance < distance_min_km:
+                position_libre = False
+                break
+        
+        if position_libre:
+            return (new_lat, new_lon)
+        
+        # Augmenter l'angle pour la spirale
+        angle += np.pi / 6  # 30 degrés
+        if angle > 2 * np.pi:
+            angle = 0
+            rayon += radius_deg * 0.8  # Augmenter le rayon
+    
+    # Si aucune position n'est trouvée, retourner une position décalée
+    return (lat_centre + rayon, lon_centre + rayon)
+
+def _optimiser_par_clustering(df, distance_min_km):
+    """
+    Utilise DBSCAN pour identifier les groupes de points proches
+    et les réorganise en cercle autour du centroïde
+    """
+    coords = df[['latitude_ressource', 'longitude_ressource']].values
+    epsilon_deg = distance_min_km / 111.32  # Conversion km vers degrés
+    
+    # Clustering
+    clustering = DBSCAN(eps=epsilon_deg, min_samples=1).fit(coords)
+    df['cluster'] = clustering.labels_
+    
+    # Réorganiser chaque cluster
+    for cluster_id in df['cluster'].unique():
+        cluster_points = df[df['cluster'] == cluster_id]
+        
+        if len(cluster_points) > 1:
+            # Calculer le centroïde
+            center_lat = cluster_points['latitude_ressource'].mean()
+            center_lon = cluster_points['longitude_ressource'].mean()
+            
+            # Disposer les points en cercle autour du centroïde
+            n_points = len(cluster_points)
+            radius_deg = distance_min_km / 111.32
+            
+            for i, idx in enumerate(cluster_points.index):
+                angle = 2 * np.pi * i / n_points
+                new_lat = center_lat + radius_deg * np.cos(angle)
+                new_lon = center_lon + radius_deg * np.sin(angle)
+                
+                df.at[idx, 'latitude_ressource'] = new_lat
+                df.at[idx, 'longitude_ressource'] = new_lon
+    
+    df.drop('cluster', axis=1, inplace=True)
+    return df
+
+def _optimiser_simple(df, distance_min_km):
+    """
+    Version simple : décale légèrement les points en conflit
+    """
+    for i in range(len(df)):
+        for j in range(i+1, len(df)):
+            lat1 = df.at[i, 'latitude_ressource']
+            lon1 = df.at[i, 'longitude_ressource']
+            lat2 = df.at[j, 'latitude_ressource'] 
+            lon2 = df.at[j, 'longitude_ressource']
+            
+            distance = haversine(lon1, lat1, lon2, lat2)
+            
+            if distance < distance_min_km:
+                # Décaler le deuxième point
+                offset_deg = distance_min_km / 111.32
+                df.at[j, 'latitude_ressource'] = lat2 + offset_deg * 0.5
+                df.at[j, 'longitude_ressource'] = lon2 + offset_deg * 0.5
+    
+    return df
 
 def render_tableau(df_filtre):
     """Rendu du tableau des ressources avec tableau et vue hiérarchique en bas"""
@@ -795,16 +1013,17 @@ def render_tableau(df_filtre):
         id='tableau-ressources',
         data=donnees_filtrees.to_dict('records'),
         columns=[
-            {"name": "Niveau", "id": "niveau_recours", "type": "text"},
-            {"name": "Type", "id": "type_praticien", "type": "text"},
-            {"name": "Nom", "id": "Praticien", "type": "text"},
-            {"name": "Type Ressource", "id": "typeressource", "type": "text"},
-            {"name": "secteur", "id": "secteur", "type": "text"},
-            {"name": "conventionnement", "id": "conventionnement", "type": "text"},
-            {"name": "Téléphone", "id": "telephone", "type": "text"},
-            {"name": "note", "id": "note_moyenne", "type": "numeric", "format": {"specifier": ".1f"}},
-            {"name": "Nb avis", "id": "nombre_avis", "type": "numeric"},
-        ],
+        {"name": "Niveau", "id": "niveau_recours", "type": "text"},
+        {"name": "Type", "id": "type_praticien", "type": "text"},
+        {"name": "Nom", "id": "Praticien", "type": "text"},
+        {"name": "Type Ressource", "id": "typeressource", "type": "text"},
+        {"name": "Spécialités", "id": "specialites", "type": "text"},
+        {"name": "Spécificités", "id": "specificites", "type": "text"},
+        {"name": "Formations", "id": "formations", "type": "text"},
+        {"name": "Diplômes", "id": "diplomes", "type": "text"},
+        {"name": "Note", "id": "note_moyenne", "type": "numeric", "format": {"specifier": ".1f"}},
+        {"name": "Nb avis", "id": "nombre_avis", "type": "numeric"},
+    ],
         style_table={'overflowX': 'auto'},
         style_cell={
             'textAlign': 'left',
@@ -996,40 +1215,70 @@ def render_dashboard_satisfaction():
             html.Div([dcc.Graph(figure=fig_niveau)], style={"width": "40%", "display": "inline-block"})
         ])
     ])
+    
+    
 
 def creer_statistiques_synthese(df_filtre):
-    """Crée les statistiques de synthèse"""
+    """Crée les statistiques de synthèse avec un meilleur formatage"""
     if df_filtre.empty:
         return html.Div("Aucune donnée disponible")
     
     total = len(df_filtre)
-    
     repartition = df_filtre['niveau_recours'].value_counts()
-    
     note_moyenne = df_filtre['note_moyenne'].mean()
     ressources_avec_avis = len(df_filtre[df_filtre['nombre_avis'] > 0])
+    total_avis = df_filtre['nombre_avis'].sum()
     
     return html.Div([
-        html.Div([
-            html.H4("Statistiques Générales"),
-            html.P(f"Total ressources : {total}"),
-            html.P(f"note moyenne : {note_moyenne:.1f}/5"),
-            html.P(f"Ressources avec avis : {ressources_avec_avis}")
-        ], style={"width": "30%", "display": "inline-block"}),
+        html.H4(" Statistiques Générales", style={"marginBottom": "15px", "color": "#2c3e50"}),
         
         html.Div([
-            html.H4("Répartition par Niveau"),
-            *[html.P(f"{niveau} : {count} ({count/total*100:.1f}%)", 
-                     style={"color": STRUCTURE_RECOURS.get(niveau, {}).get("color", "#000")}) 
-              for niveau, count in repartition.items()]
-        ], style={"width": "40%", "display": "inline-block", "marginLeft": "5%"}),
-        
-        html.Div([
-            html.H4("Top Types de Ressources"),
-            *[html.P(f"{type_res} : {count}") 
-              for type_res, count in df_filtre['typeressource'].value_counts().head(3).items()]
-        ], style={"width": "25%", "float": "right"})
-    ], style={"padding": "15px", "backgroundColor": "#f8f9fa", "borderRadius": "5px", "marginBottom": "20px"})
+            # Colonne 1: Totaux
+            html.Div([
+                html.Div([
+                    html.H5("Total", style={"color": "#495057", "marginBottom": "10px"}),
+                    html.P(f" {total} ressources", style={"fontSize": "16px", "margin": "5px 0"}),
+                    html.P(f" {note_moyenne:.1f}/5 note moyenne", style={"fontSize": "16px", "margin": "5px 0"}),
+                    html.P(f" {total_avis} avis total", style={"fontSize": "16px", "margin": "5px 0"})
+                ])
+            ], style={"width": "23%", "display": "inline-block", "padding": "10px"}),
+            
+            # Colonne 2: Répartition par niveau
+            html.Div([
+                html.H5("Niveaux de Recours", style={"color": "#495057", "marginBottom": "10px"}),
+                *[html.Div([
+                    html.Span(f"• {niveau}: ", style={"fontWeight": "bold"}),
+                    html.Span(f"{count} ({count/total*100:.1f}%)", 
+                             style={"color": STRUCTURE_RECOURS.get(niveau, {}).get("color", "#000")})
+                ], style={"margin": "5px 0"}) 
+                for niveau, count in repartition.items()]
+            ], style={"width": "30%", "display": "inline-block", "padding": "10px", "marginLeft": "2%"}),
+            
+            # Colonne 3: Types de ressources
+            html.Div([
+                html.H5("Types Principaux", style={"color": "#495057", "marginBottom": "10px"}),
+                *[html.Div([
+                    html.Span(f"• {type_res}: ", style={"fontWeight": "bold"}),
+                    html.Span(f"{count}")
+                ], style={"margin": "5px 0"}) 
+                for type_res, count in df_filtre['typeressource'].value_counts().head(4).items()]
+            ], style={"width": "22%", "display": "inline-block", "padding": "10px", "marginLeft": "2%"}),
+            
+            # Colonne 4: Qualité
+            html.Div([
+                html.H5("Qualité", style={"color": "#495057", "marginBottom": "10px"}),
+                html.P(f" {ressources_avec_avis} ressources avec avis"),
+                html.P(f" {ressources_avec_avis/total*100:.1f}% de couverture"),
+                html.P(f" Meilleure note: {df_filtre['note_moyenne'].max():.1f}/5")
+            ], style={"width": "20%", "display": "inline-block", "padding": "10px", "marginLeft": "2%"})
+        ], style={
+            "backgroundColor": "#ffffff",
+            "border": "1px solid #dee2e6",
+            "borderRadius": "8px",
+            "padding": "15px",
+            "marginBottom": "20px"
+        })
+    ])
 
 
 @dash.callback(
