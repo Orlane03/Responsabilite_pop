@@ -14,6 +14,91 @@ from math import radians, cos, sin, asin, sqrt
 dash.register_page(__name__, path="/page-ressources", name="Ressources Médicales")
 
 
+# Configuration des campagnes de prévention saisonnières
+CAMPAGNES_PREVENTION = {
+    "octobre_rose": {
+        "nom": "Octobre Rose",
+        "mois": 10,
+        "icone": "🎗️",
+        "color": "#FF69B4",
+        "description": "Dépistage et prévention du cancer du sein",
+        "mots_cles": ["mammographie", "sein", "gynécologie", "cancer du sein", "dépistage féminin"]
+    },
+    "november": {
+        "nom": "November",
+        "mois": 11,
+        "icone": "💙",
+        "color": "#1E90FF",
+        "description": "Santé masculine - prostate, testicules, santé mentale",
+        "mots_cles": ["urologie", "prostate", "andrologie", "santé masculine"]
+    },
+    "mars_bleu": {
+        "nom": "Mars Bleu",
+        "mois": 3,
+        "icone": "🔵",
+        "color": "#4169E1",
+        "description": "Prévention du cancer colorectal",
+        "mots_cles": ["coloscopie", "colorectal", "gastro-entérologie", "dépistage intestinal"]
+    },
+    "journee_diabete": {
+    "nom": "Journée Mondiale du Diabète",
+    "mois": 11,
+    "jour": 14,
+    "icone": "💜",
+    "color": "#9370DB",
+    "description": "Prévention et dépistage du diabète",
+    "mots_cles": ["diabète", "diabete", "diabétologie", "diabetologie", 
+                  "endocrinologie", "endocrinologue", "glycémie", "glycemie",
+                  "insuline", "métabolisme", "metabolisme", "nutritionniste",
+                  "diététicien", "dieteticien"]
+},
+    "semaine_coeur": {
+        "nom": "Semaine du Cœur",
+        "mois": 9,
+        "icone": "❤️",
+        "color": "#DC143C",
+        "description": "Prévention cardiovasculaire",
+        "mots_cles": ["cardiologie", "cardiovasculaire", "cœur", "tension"]
+    }
+}
+
+def get_campagne_active():
+    """Retourne la campagne active selon le mois actuel"""
+    from datetime import datetime
+    mois_actuel = datetime.now().month
+    
+    campagnes_actives = []
+    for key, campagne in CAMPAGNES_PREVENTION.items():
+        if campagne["mois"] == mois_actuel:
+            campagnes_actives.append({**campagne, "id": key})
+    
+    return campagnes_actives if campagnes_actives else None
+
+def filtrer_ressources_campagne(df, campagne):
+    """Filtre les ressources pertinentes pour une campagne"""
+    if df.empty or not campagne:
+        return df
+    
+    mots_cles = campagne.get("mots_cles", [])
+    
+    if not mots_cles:
+        return df
+    
+    # Chercher dans les colonnes pertinentes avec gestion des None
+    mask = df.apply(lambda row: any(
+        mot.lower() in str(row.get(col, '')).lower()
+        for mot in mots_cles
+        for col in ['specialites', 'type_praticien', 'description_ressource', 
+                    'specificites', 'nom_ressource', 'typeressource']
+    ), axis=1)
+    
+    df_filtre = df[mask]
+    
+    # Debug : afficher combien de ressources trouvées
+    print(f"Campagne {campagne.get('nom', 'Inconnue')} : {len(df_filtre)} ressources trouvées sur {len(df)} totales")
+    
+    return df_filtre
+
 STRUCTURE_RECOURS = {
     "Prévention": {
         "color": "#007bff",  
@@ -412,6 +497,18 @@ layout = html.Div([
     html.H2("Système d'Information des Parcours de Santé - Région de Bayonne", 
             style={"textAlign": "center", "marginBottom": "30px"}),
     
+    html.Div([
+    html.Label(" Campagne de prévention :", style={"fontWeight": "bold"}),
+    dcc.Dropdown(
+        id="campagne-dropdown",
+        options=[{"label": "Toutes les ressources", "value": "all"}] + [
+            {"label": f"{c['icone']} {c['nom']}", "value": key}
+            for key, c in CAMPAGNES_PREVENTION.items()
+        ],
+        value="all",
+        style={"width": "100%"}
+    )
+], style={"width": "30%", "display": "inline-block", "marginBottom": "10px"}),
     
     html.Div([
         html.P(f"Données chargées : {len(medecins_df)} ressources, {len(patients_df)} patients, {len(consultations_df)} consultations" 
@@ -656,11 +753,17 @@ parcours_stats = get_parcours_stats()
 satisfaction_stats = get_satisfaction_stats()
 pathologies_overview = create_pathologies_overview()
 
-def render_carte(df_filtre):
-    """Rendu de la carte avec toutes les ressources disponibles"""
+def render_carte(df_filtre, campagne_selectionnee=None):
+    """Rendu de la carte avec gestion des campagnes de prévention"""
     
+    # Vérifier s'il y a une campagne active
+    campagnes_actives = None
+    if campagne_selectionnee and campagne_selectionnee != "all":
+        campagne_info = CAMPAGNES_PREVENTION.get(campagne_selectionnee)
+        if campagne_info:
+            campagnes_actives = [{**campagne_info, "id": campagne_selectionnee}]
     
-    df_carte = medecins_df if not medecins_df.empty else df_filtre
+    df_carte = df_filtre.copy() if not df_filtre.empty else pd.DataFrame()
     
     if df_carte.empty:
         return html.Div("Aucune donnée à afficher sur la carte")
@@ -671,14 +774,24 @@ def render_carte(df_filtre):
     if df_carte_valide.empty:
         return html.Div("Aucune ressource avec coordonnées géographiques valides")
     
-    # Calcul du centre et du zoom adapté
+    # Identifier les ressources liées à la campagne active
+    df_carte_valide = df_carte_valide.copy()
+    df_carte_valide['est_campagne'] = False
+    df_carte_valide['campagne_nom'] = ''
+    
+    if campagnes_actives:
+        for campagne in campagnes_actives:
+            df_campagne = filtrer_ressources_campagne(df_carte_valide, campagne)
+            df_carte_valide.loc[df_campagne.index, 'est_campagne'] = True
+            df_carte_valide.loc[df_campagne.index, 'campagne_nom'] = campagne['nom']
+    
+    # Calcul du centre et du zoom
     lat_min, lat_max = df_carte_valide['latitude_ressource'].min(), df_carte_valide['latitude_ressource'].max()
     lon_min, lon_max = df_carte_valide['longitude_ressource'].min(), df_carte_valide['longitude_ressource'].max()
     
     centre_lat = (lat_min + lat_max) / 2
     centre_lon = (lon_min + lon_max) / 2
     
-    # Déterminer le niveau de zoom adapté
     lat_range = lat_max - lat_min
     lon_range = lon_max - lon_min
     max_range = max(lat_range, lon_range)
@@ -693,34 +806,38 @@ def render_carte(df_filtre):
         zoom_adapte = 13
     else:
         zoom_adapte = 14
-        
-    # Avant de créer la carte, ajoutez :
-    # NOUVEAU
+    
+    # Optimiser positions
     df_carte_valide = optimiser_positions_marqueurs(
-    df_carte_valide, 
-    distance_min_km=0.08,  # 80 mètres minimum entre marqueurs
-    methode='spiral'
+        df_carte_valide, 
+        distance_min_km=0.08,
+        methode='spiral'
     )
     
-    # Créer la carte sans légende intégrée
+    # Créer la carte avec distinction campagne
     color_map = {niveau: config["color"] for niveau, config in STRUCTURE_RECOURS.items()}
     
-    # Ajouter des couleurs pour les niveaux non définis
-    niveaux_uniques = df_carte_valide['niveau_recours'].unique()
-    for niveau in niveaux_uniques:
-        if niveau not in color_map:
-            color_map[niveau] = "#999999"
+    # Modifier la couleur pour les ressources de campagne
+    if campagnes_actives:
+        df_carte_valide['couleur_affichage'] = df_carte_valide.apply(
+            lambda row: campagnes_actives[0]['color'] if row['est_campagne'] 
+            else color_map.get(row['niveau_recours'], "#999999"),
+            axis=1
+        )
+        df_carte_valide['taille_marqueur'] = df_carte_valide['est_campagne'].apply(
+            lambda x: 20 if x else 15
+        )
+    else:
+        df_carte_valide['couleur_affichage'] = df_carte_valide['niveau_recours'].map(color_map)
+        df_carte_valide['taille_marqueur'] = 15
     
-    # Créer la figure sans légende
-    df_carte_valide = df_carte_valide.copy()
-    df_carte_valide['taille_marqueur'] = 15
-    
+    # Créer la figure
     fig = px.scatter_mapbox(
         df_carte_valide,
         lat="latitude_ressource",
         lon="longitude_ressource",
         size="taille_marqueur",
-        color="niveau_recours",
+        color="couleur_affichage",
         hover_name="nom_ressource",
         hover_data={
             "type_praticien": True, 
@@ -730,25 +847,24 @@ def render_carte(df_filtre):
             "specificites": True,
             "note_moyenne": ":.1f",
             "nombre_avis": True,
+            "campagne_nom": True,
             "latitude_ressource": False,
             "longitude_ressource": False,
             "taille_marqueur": False,
-            "niveau_recours": False  # Cacher dans les infos hover
+            "couleur_affichage": False,
+            "est_campagne": False
         },
-        color_discrete_map=color_map,
-        size_max=20,
+        color_discrete_map="identity",  # Utiliser les couleurs exactes
+        size_max=25,
         zoom=zoom_adapte,
         center={"lat": centre_lat, "lon": centre_lon},
         mapbox_style="open-street-map",
         height=600
     )
     
-    # Supprimer la légende intégrée
     fig.update_layout(showlegend=False)
-    
-    # Améliorer le layout
     fig.update_layout(
-        margin=dict(l=0, r=0, t=0, b=0),  # Réduire les marges
+        margin=dict(l=0, r=0, t=0, b=0),
         mapbox=dict(
             bearing=0,
             pitch=0,
@@ -757,10 +873,194 @@ def render_carte(df_filtre):
         )
     )
     
-    # Créer une légende externe
-    legende_niveaux = html.Div([
-        html.H5("Légende des Niveaux de Recours", style={"marginBottom": "10px"}),
-        html.Div([
+    # Bannière de campagne
+    banniere_campagne = None
+    if campagnes_actives:
+        campagne = campagnes_actives[0]
+        nb_ressources_campagne = df_carte_valide['est_campagne'].sum()
+        
+        if nb_ressources_campagne > 0:
+            banniere_campagne = html.Div([
+                html.Div([
+                    html.Span(campagne['icone'], style={"fontSize": "30px", "marginRight": "15px"}),
+                    html.Div([
+                        html.H4(f" {campagne['nom']} en cours !", 
+                               style={"margin": "0", "color": "white"}),
+                        html.P(f"{campagne['description']} - {nb_ressources_campagne} ressources disponibles",
+                              style={"margin": "5px 0 0 0", "color": "white", "fontSize": "14px"})
+                    ], style={"flex": "1"}),
+                ], style={
+                    "display": "flex",
+                    "alignItems": "center",
+                    "padding": "15px 20px"
+                })
+            ], style={
+                "backgroundColor": campagne['color'],
+                "borderRadius": "10px",
+                "marginBottom": "20px",
+                "boxShadow": "0 4px 6px rgba(0,0,0,0.1)"
+            })
+        else:
+            banniere_campagne = html.Div([
+                html.Div([
+                    html.Span(campagne['icone'], style={"fontSize": "30px", "marginRight": "15px"}),
+                    html.Div([
+                        html.H4(f" {campagne['nom']}", 
+                               style={"margin": "0", "color": "white"}),
+                        html.P(f"{campagne['description']} - Aucune ressource spécifique trouvée dans cette zone",
+                              style={"margin": "5px 0 0 0", "color": "white", "fontSize": "14px"}),
+                        html.P(" Essayez de consulter l'onglet 'Pathologies' ou contactez votre médecin traitant",
+                              style={"margin": "5px 0 0 0", "color": "white", "fontSize": "12px", "fontStyle": "italic"})
+                    ], style={"flex": "1"})
+                ], style={
+                    "display": "flex",
+                    "alignItems": "center",
+                    "padding": "15px 20px"
+                })
+            ], style={
+                "backgroundColor": "#6c757d",
+                "borderRadius": "10px",
+                "marginBottom": "20px",
+                "boxShadow": "0 4px 6px rgba(0,0,0,0.1)"
+            })
+            
+    liste_ressources_campagne = None
+    if campagnes_actives and nb_ressources_campagne > 0:
+        campagne = campagnes_actives[0]
+        df_ressources_campagne = df_carte_valide[df_carte_valide['est_campagne'] == True].copy()
+        
+        # Trier par note moyenne (décroissant)
+        df_ressources_campagne = df_ressources_campagne.sort_values('note_moyenne', ascending=False)
+        
+        # Créer les cartes de ressources
+        cartes_ressources = []
+        for idx, ressource in df_ressources_campagne.iterrows():
+            carte = html.Div([
+                # En-tête de la carte
+                html.Div([
+                    html.Div([
+                        html.H6(ressource['nom_ressource'], 
+                               style={"margin": "0", "color": "#2c3e50", "fontSize": "14px", "fontWeight": "bold"}),
+                        html.P(ressource['type_praticien'], 
+                              style={"margin": "2px 0", "fontSize": "12px", "color": "#6c757d"})
+                    ], style={"flex": "1"}),
+                    
+                    # Note
+                    html.Div([
+                        html.Span("⭐", style={"fontSize": "16px"}),
+                        html.Span(f"{ressource['note_moyenne']:.1f}", 
+                                 style={"fontSize": "14px", "fontWeight": "bold", "marginLeft": "3px"})
+                    ], style={"textAlign": "right"}) if ressource['nombre_avis'] > 0 else html.Div()
+                ], style={"display": "flex", "marginBottom": "8px"}),
+                
+                # Informations détaillées
+                html.Div([
+                    # Spécialités
+                    html.Div([
+                        html.Span("🏥 ", style={"marginRight": "5px"}),
+                        html.Span(ressource['specialites'] if pd.notna(ressource['specialites']) else "Non spécifié",
+                                 style={"fontSize": "11px", "color": "#495057"})
+                    ], style={"marginBottom": "4px"}) if pd.notna(ressource['specialites']) else html.Div(),
+                    
+                    # Secteur
+                    html.Div([
+                        html.Span("📍 ", style={"marginRight": "5px"}),
+                        html.Span(f"Secteur {ressource['secteur']}" if pd.notna(ressource['secteur']) else "Secteur non spécifié",
+                                 style={"fontSize": "11px", "color": "#495057"})
+                    ], style={"marginBottom": "4px"}),
+                    
+                    # Téléphone
+                    html.Div([
+                        html.Span("📞 ", style={"marginRight": "5px"}),
+                        html.Span(ressource['telephone'] if pd.notna(ressource['telephone']) else "Non disponible",
+                                 style={"fontSize": "11px", "color": "#495057"})
+                    ], style={"marginBottom": "4px"}),
+                    
+                    # Conventionnement
+                    html.Div([
+                        html.Span("💳 ", style={"marginRight": "5px"}),
+                        html.Span(ressource['conventionnement'] if pd.notna(ressource['conventionnement']) else "Non spécifié",
+                                 style={"fontSize": "11px", "color": "#495057"})
+                    ], style={"marginBottom": "4px"}) if pd.notna(ressource['conventionnement']) else html.Div(),
+                    
+                    # Avis
+                    html.Div([
+                        html.Span(f" {int(ressource['nombre_avis'])} avis",
+                                 style={"fontSize": "10px", "color": "#6c757d", "fontStyle": "italic"})
+                    ], style={"marginTop": "6px"}) if ressource['nombre_avis'] > 0 else html.Div()
+                ])
+            ], style={
+                "backgroundColor": "#ffffff",
+                "border": f"2px solid {campagne['color']}",
+                "borderRadius": "8px",
+                "padding": "12px",
+                "marginBottom": "10px",
+                "boxShadow": "0 2px 4px rgba(0,0,0,0.1)",
+                "transition": "transform 0.2s, box-shadow 0.2s"
+            }, className="resource-card")
+            
+            cartes_ressources.append(carte)
+        
+        liste_ressources_campagne = html.Div([
+            html.Div([
+                html.H5(f"{campagne['icone']} Ressources {campagne['nom']}", 
+                       style={"margin": "0 0 15px 0", "color": campagne['color'], "fontSize": "16px"}),
+                html.P(f"{len(cartes_ressources)} ressource(s) disponible(s)",
+                      style={"fontSize": "12px", "color": "#6c757d", "marginBottom": "15px"})
+            ]),
+            
+            # Liste scrollable
+            html.Div(
+                cartes_ressources,
+                style={
+                    "maxHeight": "500px",
+                    "overflowY": "auto",
+                    "paddingRight": "5px"
+                }
+            )
+        ], style={
+            "backgroundColor": "#f8f9fa",
+            "padding": "15px",
+            "borderRadius": "8px",
+            "border": "1px solid #dee2e6"
+        })
+    
+    # Légende mise à jour
+    legende_elements = []
+    
+    # Ajouter la campagne active en premier
+    if campagnes_actives:
+        campagne = campagnes_actives[0]
+        nb_campagne = df_carte_valide['est_campagne'].sum()
+        if nb_campagne > 0:
+            legende_elements.append(
+                html.Div([
+                    html.Span("●", style={
+                        "color": campagne['color'], 
+                        "fontSize": "24px", 
+                        "marginRight": "10px",
+                        "verticalAlign": "middle"
+                    }),
+                    html.Span(f"{campagne['icone']} {campagne['nom']} ({nb_campagne} ressources)", 
+                             style={
+                                 "fontSize": "15px", 
+                                 "verticalAlign": "middle",
+                                 "fontWeight": "bold"
+                             })
+                ], style={
+                    "margin": "12px 0", 
+                    "display": "flex", 
+                    "alignItems": "center",
+                    "padding": "8px",
+                    "backgroundColor": f"{campagne['color']}15",
+                    "borderRadius": "5px"
+                })
+            )
+            legende_elements.append(html.Hr(style={"margin": "10px 0"}))
+    
+    # Ajouter les niveaux normaux
+    for niveau, config in STRUCTURE_RECOURS.items():
+        legende_elements.append(
             html.Div([
                 html.Span("●", style={
                     "color": config["color"], 
@@ -771,8 +1071,11 @@ def render_carte(df_filtre):
                 html.Span(f"{niveau}: {config['description']}", 
                          style={"fontSize": "14px", "verticalAlign": "middle"})
             ], style={"margin": "8px 0", "display": "flex", "alignItems": "center"})
-            for niveau, config in STRUCTURE_RECOURS.items()
-        ])
+        )
+    
+    legende_niveaux = html.Div([
+        html.H5("Légende des Niveaux de Recours", style={"marginBottom": "10px"}),
+        html.Div(legende_elements)
     ], style={
         "backgroundColor": "#f8f9fa", 
         "padding": "15px", 
@@ -781,45 +1084,67 @@ def render_carte(df_filtre):
         "border": "1px solid #dee2e6"
     })
     
-    # Statistiques
     stats = creer_statistiques_synthese(df_carte_valide)
     rapport = creer_rapport_territorial(df_carte_valide, "Bayonne/Pays Basque")
     
     return html.Div([
-        # Titre principal
+        # Bannière de campagne
+        banniere_campagne if banniere_campagne else html.Div(),
+        
+        # Titre
         html.H3("Cartographie des Ressources Médicales", 
                style={"textAlign": "center", "marginBottom": "20px", "color": "#2c3e50"}),
         
-        # Layout en deux colonnes : Carte + Légende
+        # Layout carte + légende
         html.Div([
-            # Colonne carte (70%)
             html.Div([
                 dcc.Graph(
                     figure=fig,
                     style={"height": "600px", "borderRadius": "8px", "border": "1px solid #dee2e6"}
                 )
-            ], style={"width": "70%", "display": "inline-block", "verticalAlign": "top"}),
+            ], style={
+                "width": "50%" if liste_ressources_campagne else "70%", 
+                "display": "inline-block", 
+                "verticalAlign": "top"
+            }),
             
-            # Colonne légende (30%)
             html.Div([
                 legende_niveaux,
                 
-                # Mini-statistiques
                 html.Div([
                     html.H6("Aperçu", style={"marginBottom": "10px"}),
-                    html.P(f" {len(df_carte_valide)} ressources affichées"),
-                    html.P(f" Note moyenne: {df_carte_valide['note_moyenne'].mean():.1f}/5"),
-                    html.P(f" {df_carte_valide['nombre_avis'].sum()} avis au total")
+                    html.P(f"📊 {len(df_carte_valide)} ressources affichées"),
+                    html.P(f"⭐ Note moyenne: {df_carte_valide['note_moyenne'].mean():.1f}/5"),
+                    html.P(f"💬 {df_carte_valide['nombre_avis'].sum()} avis au total"),
+                    
+                    # Afficher stats campagne si active
+                    *([html.Hr()] + [
+                        html.P(f"{campagnes_actives[0]['icone']} {df_carte_valide['est_campagne'].sum()} ressources {campagnes_actives[0]['nom']}",
+                              style={"fontWeight": "bold", "color": campagnes_actives[0]['color']})
+                    ] if campagnes_actives and nb_ressources_campagne > 0 else [])
                 ], style={
                     "backgroundColor": "#e8f5e8", 
                     "padding": "12px", 
                     "borderRadius": "6px",
                     "marginTop": "15px"
                 })
-            ], style={"width": "28%", "display": "inline-block", "marginLeft": "2%", "verticalAlign": "top"})
+            ], style={
+                "width": "23%" if liste_ressources_campagne else "28%", 
+                "display": "inline-block", 
+                "marginLeft": "2%", 
+                "verticalAlign": "top"
+            }),
+            
+            html.Div([
+                liste_ressources_campagne
+            ], style={
+                "width": "23%", 
+                "display": "inline-block" if liste_ressources_campagne else "none", 
+                "marginLeft": "2%", 
+                "verticalAlign": "top"
+            })
         ], style={"marginBottom": "30px"}),
         
-        # Informations détaillées en dessous de la carte
         html.Div([
             stats,
             rapport,
@@ -829,7 +1154,10 @@ def render_carte(df_filtre):
                 html.Ul([
                     html.Li("Survolez les marqueurs pour voir les détails de chaque ressource"),
                     html.Li("Zoom et déplacement avec la souris ou les touches"),
-                    html.Li("Couleurs des marqueurs selon le niveau de recours (voir légende)")
+                    html.Li("Couleurs des marqueurs selon le niveau de recours (voir légende)"),
+                    *([html.Li(f"{campagnes_actives[0]['icone']} Les marqueurs {campagnes_actives[0]['nom'].lower()} indiquent les ressources liées à la campagne", 
+                             style={"fontWeight": "bold", "color": campagnes_actives[0]['color']})] 
+                      if campagnes_actives and nb_ressources_campagne > 0 else [])
                 ])
             ], style={
                 "backgroundColor": "#e9ecef", 
@@ -1287,9 +1615,10 @@ def creer_statistiques_synthese(df_filtre):
     [Input("tabs-visualisation", "value"),
      Input("niveau-recours-dropdown", "value"),
      Input("type-praticien-dropdown", "value"),
-     Input("type-ressource-dropdown", "value")]
+     Input("type-ressource-dropdown", "value"),
+     Input("campagne-dropdown", "value")]
 )
-def render_contenu_etendu(tab_actif, niveau_recours, type_praticien, type_ressource):
+def render_contenu_etendu(tab_actif, niveau_recours, type_praticien, type_ressource, campagne_selectionnee):
     if medecins_df.empty:
         return html.P("Aucune donnée disponible", style={"color": "red"}), {"display": "block"}
     
@@ -1298,6 +1627,11 @@ def render_contenu_etendu(tab_actif, niveau_recours, type_praticien, type_ressou
     
     if show_filters:
         df_filtre = medecins_df.copy()
+        
+        if campagne_selectionnee and campagne_selectionnee != "all":
+            campagne_info = CAMPAGNES_PREVENTION.get(campagne_selectionnee)
+            if campagne_info:
+                df_filtre = filtrer_ressources_campagne(df_filtre, campagne_info)
         
         if niveau_recours != "all":
             df_filtre = df_filtre[df_filtre['niveau_recours'] == niveau_recours]
@@ -1312,7 +1646,7 @@ def render_contenu_etendu(tab_actif, niveau_recours, type_praticien, type_ressou
             return html.P("Aucune donnée pour cette sélection", style={"color": "orange"}), filter_style
     
     if tab_actif == 'tab-carte':
-        return render_carte(df_filtre), filter_style
+        return render_carte(df_filtre, campagne_selectionnee), filter_style
     elif tab_actif == 'tab-tableau':
         return render_tableau(df_filtre), filter_style
     elif tab_actif == 'tab-parcours':
