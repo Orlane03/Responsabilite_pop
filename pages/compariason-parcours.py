@@ -23,12 +23,12 @@ parcours_patients_df = pd.read_sql("""
         ur.id_ressource, ur.date_consultation, ur.duree_consultation, ur.cout_consultation,
         r.nom_ressource as description_ressource, r.latitude_ressource, r.longitude_ressource,
         r.typeressource, a.nomaxe
-    FROM parcours p
-    JOIN parcours_type pt ON p.id_parcours_type = pt.id_parcours_type
-    JOIN personne pers ON p.id_personne = pers.id_personne
-    LEFT JOIN utilise_ressource ur ON p.id_parcours = ur.id_parcours
-    LEFT JOIN ressource r ON ur.id_ressource = r.id_ressource
-    LEFT JOIN axe a ON ur.id_axe = a.id_axe
+    FROM public.parcours p
+    JOIN public.parcours_type pt ON p.id_parcours_type = pt.id_parcours_type
+    JOIN public.personne pers ON p.id_personne = pers.id_personne
+    LEFT JOIN public.utilise_ressource ur ON p.id_parcours = ur.id_parcours
+    LEFT JOIN public.ressource r ON ur.id_ressource = r.id_ressource
+    LEFT JOIN public.axe a ON ur.id_axe = a.id_axe
     ORDER BY p.id_parcours, ur.date_consultation
 """, engine)
 
@@ -40,12 +40,12 @@ parcours_patients_df = pd.read_sql("""
         ur.id_ressource, ur.date_consultation, ur.duree_consultation, ur.cout_consultation,
         r.nom_ressource as description_ressource, r.latitude_ressource, r.longitude_ressource,
         r.typeressource, a.nomaxe
-    FROM parcours p
-    JOIN parcours_type pt ON p.id_parcours_type = pt.id_parcours_type
-    JOIN personne pers ON p.id_personne = pers.id_personne
-    LEFT JOIN utilise_ressource ur ON p.id_parcours = ur.id_parcours
-    LEFT JOIN ressource r ON ur.id_ressource = r.id_ressource
-    LEFT JOIN axe a ON ur.id_axe = a.id_axe
+    FROM public.parcours p
+    JOIN public.parcours_type pt ON p.id_parcours_type = pt.id_parcours_type
+    JOIN public.personne pers ON p.id_personne = pers.id_personne
+    LEFT JOIN public.utilise_ressource ur ON p.id_parcours = ur.id_parcours
+    LEFT JOIN public.ressource r ON ur.id_ressource = r.id_ressource
+    LEFT JOIN public.axe a ON ur.id_axe = a.id_axe
     ORDER BY p.id_parcours, ur.date_consultation
 """, engine)
 
@@ -55,16 +55,16 @@ parcours_types_df = pd.read_sql("""
         pr.id_ressource, pr.ordre, pr.frequence, pr.nombre_de_visite,
         r.nom_ressource as description_ressource, r.latitude_ressource, r.longitude_ressource,
         r.typeressource
-    FROM parcours_type pt
-    LEFT JOIN prevoit_ressource pr ON pt.id_parcours_type = pr.id_parcours_type
-    LEFT JOIN ressource r ON pr.id_ressource = r.id_ressource
+    FROM public.parcours_type pt
+    LEFT JOIN public.prevoit_ressource pr ON pt.id_parcours_type = pr.id_parcours_type
+    LEFT JOIN public.ressource r ON pr.id_ressource = r.id_ressource
     ORDER BY pt.id_parcours_type, pr.ordre
 """, engine)
 
 
 ressources_df = pd.read_sql("""
     SELECT id_ressource, nom_ressource as description_ressource, typeressource
-    FROM ressource
+    FROM public.ressource
 """, engine)
 
 

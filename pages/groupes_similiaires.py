@@ -15,9 +15,9 @@ engine = get_engine()
 
 personnes_df = pd.read_sql("""
     SELECT p.id_personne, p.nom, p.prenom, pt.nom_parcours_type
-    FROM Personne p
-    LEFT JOIN Parcours pa ON p.id_personne = pa.id_personne
-    LEFT JOIN Parcours_type pt ON pa.ID_Parcours_type = pt.ID_Parcours_type
+    FROM public.Personne p
+    LEFT JOIN public.Parcours pa ON p.id_personne = pa.id_personne
+    LEFT JOIN public.Parcours_type pt ON pa.ID_Parcours_type = pt.ID_Parcours_type
 """, engine)
 
 

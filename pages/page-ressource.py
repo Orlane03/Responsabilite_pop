@@ -153,18 +153,18 @@ def load_data_from_postgres():
             -- Jointure avec avis (moyenne des notes)
             COALESCE(AVG(ar.note), 0) as note_moyenne,
             COUNT(ar.id_avis) as nombre_avis
-        FROM Ressource r
-        LEFT JOIN type_praticien_Structure tps ON r.id_type = tps.id_type
-        LEFT JOIN niveau_recours nr ON tps.id_niveau_recours = nr.id_niveau_recours
-        LEFT JOIN Ressource_specialite rs ON r.id_ressource = rs.id_ressource
-        LEFT JOIN specialite s ON rs.id_specialite = s.id_specialite
-        LEFT JOIN Ressource_Specificite rsp ON r.id_ressource = rsp.id_ressource
-        LEFT JOIN Specificite sp ON rsp.id_specificite = sp.id_specificite
-        LEFT JOIN Ressource_Formation rf ON r.id_ressource = rf.id_ressource
-        LEFT JOIN Formation f ON rf.id_formation = f.id_formation
-        LEFT JOIN Ressource_Diplome rd ON r.id_ressource = rd.id_ressource
-        LEFT JOIN Diplome d ON rd.id_diplome = d.id_diplome
-        LEFT JOIN avis_Ressource ar ON r.id_ressource = ar.id_ressource
+        FROM public.Ressource r
+        LEFT JOIN public.type_praticien_Structure tps ON r.id_type = tps.id_type
+        LEFT JOIN public.niveau_recours nr ON tps.id_niveau_recours = nr.id_niveau_recours
+        LEFT JOIN public.Ressource_specialite rs ON r.id_ressource = rs.id_ressource
+        LEFT JOIN public.specialite s ON rs.id_specialite = s.id_specialite
+        LEFT JOIN public.Ressource_Specificite rsp ON r.id_ressource = rsp.id_ressource
+        LEFT JOIN public.Specificite sp ON rsp.id_specificite = sp.id_specificite
+        LEFT JOIN public.Ressource_Formation rf ON r.id_ressource = rf.id_ressource
+        LEFT JOIN public.Formation f ON rf.id_formation = f.id_formation
+        LEFT JOIN public.Ressource_Diplome rd ON r.id_ressource = rd.id_ressource
+        LEFT JOIN public.Diplome d ON rd.id_diplome = d.id_diplome
+        LEFT JOIN public.avis_Ressource ar ON r.id_ressource = ar.id_ressource
         GROUP BY 
             r.id_ressource, r.nom_ressource, r.description_ressource, r.typeressource,
             r.telephone, r.email, r.horaires_ouverture, r.secteur, r.conventionnement,
@@ -216,12 +216,12 @@ def load_patients_data():
             STRING_AGG(DISTINCT t.nomtheme, ', ') as Pathologies,
             -- nombre de consultations
             COUNT(ur.date_consultation) as nombre_Consultations
-        FROM Personne p
-        LEFT JOIN Parcours pc ON p.id_personne = pc.id_personne
-        LEFT JOIN Parcours_type pt ON pc.id_parcours_type = pt.id_parcours_type
-        LEFT JOIN est_associe_a ea ON pc.id_parcours = ea.id_parcours
-        LEFT JOIN Theme t ON ea.id_theme = t.id_theme
-        LEFT JOIN Utilise_ressource ur ON pc.id_parcours = ur.id_parcours
+        FROM public.Personne p
+        LEFT JOIN public.Parcours pc ON p.id_personne = pc.id_personne
+        LEFT JOIN public.Parcours_type pt ON pc.id_parcours_type = pt.id_parcours_type
+        LEFT JOIN public.est_associe_a ea ON pc.id_parcours = ea.id_parcours
+        LEFT JOIN public.Theme t ON ea.id_theme = t.id_theme
+        LEFT JOIN public.Utilise_ressource ur ON pc.id_parcours = ur.id_parcours
         GROUP BY 
             p.id_personne, p.nom, p.prenom, p.datenaissance, p.sex, p.ville, p.csp,
             p.latitude_personne, p.longitude_personne, pc.id_parcours,
@@ -261,14 +261,14 @@ def load_consultations_data():
             a.nomaxe,
             -- Parcours
             pt.nom_parcours_type
-        FROM Utilise_ressource ur
-        LEFT JOIN Ressource r ON ur.id_ressource = r.id_ressource
-        LEFT JOIN type_praticien_Structure tps ON r.id_type = tps.id_type
-        LEFT JOIN niveau_recours nr ON tps.id_niveau_recours = nr.id_niveau_recours
-        LEFT JOIN Parcours pc ON ur.id_parcours = pc.id_parcours
-        LEFT JOIN Personne p ON pc.id_personne = p.id_personne
-        LEFT JOIN axe a ON ur.id_axe = a.id_axe
-        LEFT JOIN Parcours_type pt ON pc.id_parcours_type = pt.id_parcours_type
+        FROM public.Utilise_ressource ur
+        LEFT JOIN public.Ressource r ON ur.id_ressource = r.id_ressource
+        LEFT JOIN public.type_praticien_Structure tps ON r.id_type = tps.id_type
+        LEFT JOIN public.niveau_recours nr ON tps.id_niveau_recours = nr.id_niveau_recours
+        LEFT JOIN public.Parcours pc ON ur.id_parcours = pc.id_parcours
+        LEFT JOIN public.Personne p ON pc.id_personne = p.id_personne
+        LEFT JOIN public.axe a ON ur.id_axe = a.id_axe
+        LEFT JOIN public.Parcours_type pt ON pc.id_parcours_type = pt.id_parcours_type
         ORDER BY ur.date_consultation DESC
         """
         
@@ -650,10 +650,10 @@ def get_parcours_stats():
                 ELSE NULL 
             END) as duree_moyenne,
             COUNT(ur.date_consultation) as total_consultations
-        FROM Parcours_type pt
-        LEFT JOIN parcours pc ON pt.id_parcours_type = pc.id_parcours_type
-        LEFT JOIN personne p ON pc.id_personne = p.id_personne
-        LEFT JOIN utilise_ressource ur ON pc.id_parcours = ur.id_parcours
+        FROM public.Parcours_type pt
+        LEFT JOIN public.parcours pc ON pt.id_parcours_type = pc.id_parcours_type
+        LEFT JOIN public.personne p ON pc.id_personne = p.id_personne
+        LEFT JOIN public.utilise_ressource ur ON pc.id_parcours = ur.id_parcours
         GROUP BY pt.id_parcours_type, pt.nom_parcours_type
         ORDER BY nombre_parcours DESC
         """
@@ -673,10 +673,10 @@ def get_parcours_stats():
                 COUNT(DISTINCT pc.id_personne) as nombre_patients,
                 NULL as duree_moyenne,  -- Pas de calcul de durée
                 COUNT(ur.date_consultation) as total_consultations
-            FROM Parcours_type pt
-            LEFT JOIN parcours pc ON pt.id_parcours_type = pc.id_parcours_type
-            LEFT JOIN personne p ON pc.id_personne = p.id_personne
-            LEFT JOIN utilise_ressource ur ON pc.id_parcours = ur.id_parcours
+            FROM public.Parcours_type pt
+            LEFT JOIN public.parcours pc ON pt.id_parcours_type = pc.id_parcours_type
+            LEFT JOIN public.personne p ON pc.id_personne = p.id_personne
+            LEFT JOIN public.utilise_ressource ur ON pc.id_parcours = ur.id_parcours
             GROUP BY pt.id_parcours_type, pt.nom_parcours_type
             ORDER BY nombre_parcours DESC
             """
@@ -702,10 +702,10 @@ def get_satisfaction_stats():
             AVG(ur.satisfaction_patient) as satisfaction_moyenne,
             COUNT(ur.satisfaction_patient) as nombre_evaluations,
             AVG(ur.cout_consultation) as cout_moyen
-        FROM Utilise_ressource ur
-        JOIN Ressource r ON ur.id_ressource = r.id_ressource
-        JOIN type_praticien_Structure tps ON r.id_type = tps.id_type
-        JOIN niveau_recours nr ON tps.id_niveau_recours = nr.id_niveau_recours
+        FROM public.Utilise_ressource ur
+        JOIN public.Ressource r ON ur.id_ressource = r.id_ressource
+        JOIN public.type_praticien_Structure tps ON r.id_type = tps.id_type
+        JOIN public.niveau_recours nr ON tps.id_niveau_recours = nr.id_niveau_recours
         WHERE ur.satisfaction_patient IS NOT NULL
         GROUP BY r.id_ressource, r.nom_ressource, tps.nom_type, nr.nom_niveau
         HAVING COUNT(ur.satisfaction_patient) >= 1
@@ -732,10 +732,10 @@ def create_pathologies_overview():
             COUNT(DISTINCT em.id_personne) as nombre_patients,
             COUNT(DISTINCT ea.id_parcours) as nombre_parcours,
             AVG(ur.satisfaction_patient) as satisfaction_moyenne
-        FROM Theme t
-        LEFT JOIN etre_malade em ON t.id_theme = em.id_theme
-        LEFT JOIN est_associe_a ea ON t.id_theme = ea.id_theme
-        LEFT JOIN Utilise_ressource ur ON ea.id_parcours = ur.id_parcours
+        FROM public.Theme t
+        LEFT JOIN public.etre_malade em ON t.id_theme = em.id_theme
+        LEFT JOIN public.est_associe_a ea ON t.id_theme = ea.id_theme
+        LEFT JOIN public.Utilise_ressource ur ON ea.id_parcours = ur.id_parcours
         WHERE t.nomtheme IS NOT NULL
         GROUP BY t.id_theme, t.nomtheme, t.description_theme, t.niveau_theme
         ORDER BY nombre_patients DESC

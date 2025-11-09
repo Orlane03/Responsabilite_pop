@@ -18,35 +18,35 @@ dash.register_page(__name__, path="/page_patient", name="Parcours Patients")
 engine = get_engine()
 
 def load_data():
-    personnes = pd.read_sql("SELECT id_personne, nom, prenom, latitude_personne, longitude_personne FROM personne", engine)
+    personnes = pd.read_sql("SELECT id_personne, nom, prenom, latitude_personne, longitude_personne FROM public.personne", engine)
     
     groupes = pd.read_sql("""
         SELECT p.id_personne, gp.id_groupe, gp.nomgroupe
-        FROM personne p
-        JOIN appartient ap ON p.id_personne = ap.id_personne
-        JOIN groupepersonne gp ON ap.id_groupe = gp.id_groupe
+        FROM public.personne p
+        JOIN public.appartient ap ON p.id_personne = ap.id_personne
+        JOIN public.groupepersonne gp ON ap.id_groupe = gp.id_groupe
     """, engine)
     
-    axes = pd.read_sql("SELECT id_axe, nomaxe FROM Axe", engine)
+    axes = pd.read_sql("SELECT id_axe, nomaxe FROM public.Axe", engine)
     
     ressources = pd.read_sql("""
         SELECT id_ressource, nom_ressource, description_ressource, typeressource, 
                telephone, email, horaires_ouverture, secteur, conventionnement,
                latitude_ressource, longitude_ressource, id_type
-        FROM ressource
+        FROM public.ressource
     """, engine)
     
     pathologies = pd.read_sql("""
         SELECT p.id_personne, t.nomtheme
-        FROM etre_malade em
-        JOIN Theme t ON em.id_theme = t.id_theme
-        JOIN Personne p ON em.id_personne = p.id_personne
+        FROM public.etre_malade em
+        JOIN public.Theme t ON em.id_theme = t.id_theme
+        JOIN public.Personne p ON em.id_personne = p.id_personne
     """, engine)
     
     parcours = pd.read_sql("""
         SELECT p.id_parcours, p.id_personne, p.id_parcours_type, pt.nom_parcours_type
-        FROM Parcours p
-        LEFT JOIN Parcours_type pt ON p.id_parcours_type = pt.id_parcours_type
+        FROM public.Parcours p
+        LEFT JOIN public.Parcours_type pt ON p.id_parcours_type = pt.id_parcours_type
     """, engine)
     
     evenements = pd.read_sql("""
@@ -61,22 +61,22 @@ def load_data():
                r.longitude_ressource AS longitude,
                ur.duree_consultation,
                pt.nom_parcours_type
-        FROM Utilise_ressource ur
-        JOIN Parcours p ON ur.id_parcours = p.id_parcours
-        JOIN Axe a ON ur.id_axe = a.id_axe
-        JOIN ressource r ON ur.id_ressource = r.id_ressource
-        LEFT JOIN Parcours_type pt ON p.id_parcours_type = pt.id_parcours_type
+        FROM public.Utilise_ressource ur
+        JOIN public.Parcours p ON ur.id_parcours = p.id_parcours
+        JOIN public.Axe a ON ur.id_axe = a.id_axe
+        JOIN public.ressource r ON ur.id_ressource = r.id_ressource
+        LEFT JOIN public.Parcours_type pt ON p.id_parcours_type = pt.id_parcours_type
     """, engine)
     
-    parcours_types = pd.read_sql("SELECT * FROM Parcours_type", engine)
+    parcours_types = pd.read_sql("SELECT * FROM public.Parcours_type", engine)
     
     prevoit_ressources = pd.read_sql("""
         SELECT pt.id_parcours_type, pt.nom_parcours_type, 
                r.id_ressource, r.nom_ressource, 
                pr.ordre, pr.frequence, pr.nombre_de_visite
-        FROM Prevoit_ressource pr
-        JOIN Parcours_type pt ON pt.id_parcours_type = pr.id_parcours_type
-        JOIN ressource r ON r.id_ressource = pr.id_ressource
+        FROM public.Prevoit_ressource pr
+        JOIN public.Parcours_type pt ON pt.id_parcours_type = pr.id_parcours_type
+        JOIN public.ressource r ON r.id_ressource = pr.id_ressource
         ORDER BY pt.id_parcours_type, pr.ordre
     """, engine)
 
