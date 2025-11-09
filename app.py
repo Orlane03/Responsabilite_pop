@@ -9,6 +9,7 @@ app = dash.Dash(
     suppress_callback_exceptions=True,
     external_stylesheets=[dbc.themes.BOOTSTRAP]
 )
+server = app.server
 
 app.title = "Visualisation des parcours"
 
